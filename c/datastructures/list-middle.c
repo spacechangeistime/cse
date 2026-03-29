@@ -21,10 +21,10 @@ void printList(Node* head) {
 }
 
 Node* middle(Node* head) {
-	Node* slow = head;
 	for(Node* fast = head; fast != NULL && fast->next != NULL;
-		       slow = slow->next, fast = fast->next->next);
-	return slow;
+		       head = head->next, fast = fast->next->next)
+		;
+	return head;
 }
 
 int main() {
