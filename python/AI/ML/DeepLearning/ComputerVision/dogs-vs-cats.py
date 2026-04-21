@@ -16,15 +16,15 @@ args = parser.parse_args()
 
 batch_size = 32
 image_size=(180, 180)
-model_name = "dogs-vs-cats.keras"
+model_name = "dogs-vs-cats-with-data-augmentation.keras"
 image_shape = image_size + (3,)
 batch_shape = (batch_size,) + image_shape
 
-file_ext = ['.jpg', '.jpeg']
+file_exts = ['.jpg', '.jpeg']
 
 def filter_valid_jpgs(directory):
     for filename in os.listdir(directory):
-        if filename.lower().endswith(('.jpg', '.jpeg')):
+        if filename.lower().endswith(tuple(file_exts)):
             filepath = os.path.join(directory, filename)
             try:
                 with Image.open(filepath) as img:
@@ -34,7 +34,7 @@ def filter_valid_jpgs(directory):
                 if img.mode not in ['L', 'RGB', 'RGBA']:
                     print(f'Invalid image mode: {filepath}, Channels: {img.mode}')
                     img.convert('RGB')
-                    os.remove(filepath)
+                    img.save(filepath)
             except tf.errors.InvalidArgumentError as e:
                 print(f'Corrupted image {filepath}... {e}')
                 os.remove(filepath)
@@ -69,6 +69,27 @@ if not extracted_path.is_dir():
 def filter_by_shape(x, y):
     return tf.reduce_all(tf.equal(tf.shape(x), batch_shape))
 
+data_augmentation_layers = [
+        layers.RandomFlip("horizontal"),
+        layers.RandomRotation(0.1),
+        layers.RandomZoom(0.2),
+]
+def data_augmentation(images, targets):
+    for layer in data_augmentation_layers:
+        images = layer(images)
+    return images, targets
+
+def display_augmented_images(ds):
+    plt.figure(figsize=(10,10))
+    for image_batch, _ in ds.take(1):
+        image = image_batch[0]
+        for i in range(9):
+            ax = plt.subplot(3, 3, i+1)
+            augmented_image, _ = data_augmentation(image, None)
+            augmented_image = keras.ops.convert_to_numpy(augmented_image)
+            plt.imshow(augmented_image.astype("uint8"))
+            plt.axis("off")
+
 if args.train:
     train_dataset = image_dataset_from_directory(data_dir/"train", batch_size = None, image_size=image_size, color_mode='rgb')
     train_dataset = train_dataset.batch(batch_size, drop_remainder=True)
@@ -86,6 +107,11 @@ if args.train:
             print(f'validation features batch shape: {data_batch.shape}')
             print(f'validation labels batch shape: {labels_batch.shape}')
 
+    display_augmented_images(train_ds)
+
+    augmented_train_ds = train_ds.map(data_augmentation, num_parallel_calls=8)
+    augmented_train_ds = augmented_train_ds.prefetch(tf.data.AUTOTUNE)
+
     inputs = Input(shape=image_shape)
     x = layers.Rescaling(1.0/255)(inputs)
     x = layers.Conv2D(filters=32, kernel_size=3, activation="relu")(x)
@@ -98,13 +124,14 @@ if args.train:
     x = layers.MaxPooling2D(pool_size=2)(x)
     x = layers.Conv2D(filters=512, kernel_size=3, activation="relu")(x)
     x = layers.GlobalAveragePooling2D()(x)
+    x = layers.Dropout(0.25)(x)
     outputs = layers.Dense(1, activation="sigmoid")(x)
 
     model = keras.Model(inputs, outputs)
     model.summary()
     model.compile(loss="binary_crossentropy", optimizer="adam", metrics=["accuracy"])
     callbacks = [keras.callbacks.ModelCheckpoint(filepath=model_name, save_best_only=True, monitor="val_loss")]
-    history = model.fit(train_dataset, epochs=50, validation_data=validation_dataset, callbacks=callbacks)
+    history = model.fit(augmented_train_ds, epochs=100, validation_data=validation_ds, callbacks=callbacks)
 
     accuracy = history.history["accuracy"]
     val_accuracy = history.history["val_accuracy"]
@@ -123,14 +150,14 @@ if args.train:
     plt.title("Training and Validation loss")
     plt.legend()
     plt.show()
-else:
-    test_dataset = image_dataset_from_directory(data_dir/"test", batch_size = None, image_size=image_size, color_mode='rgb')
-    test_dataset = test_dataset.batch(batch_size, drop_remainder=True)
-    test_ds = test_dataset.filter(filter_by_shape)
-    for data_batch, labels_batch in test_ds:
-        if not tf.reduce_all(tf.equal(tf.shape(data_batch), batch_shape)):
-            print(f'test features batch shape: {data_batch.shape}')
-            print(f'test labels batch shape: {labels_batch.shape}')
-    test_model = keras.models.load_model(model_name)
-    test_loss, test_acc = test_model.evaluate(test_ds)
-    print(f'Test accuracy: {test_acc:.3f}')
+
+test_dataset = image_dataset_from_directory(data_dir/"test", batch_size = None, image_size=image_size, color_mode='rgb')
+test_dataset = test_dataset.batch(batch_size, drop_remainder=True)
+test_ds = test_dataset.filter(filter_by_shape)
+for data_batch, labels_batch in test_ds:
+    if not tf.reduce_all(tf.equal(tf.shape(data_batch), batch_shape)):
+        print(f'test features batch shape: {data_batch.shape}')
+        print(f'test labels batch shape: {labels_batch.shape}')
+test_model = keras.models.load_model(model_name)
+test_loss, test_acc = test_model.evaluate(test_ds)
+print(f'Test accuracy: {test_acc:.3f}')
