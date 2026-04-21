@@ -76,7 +76,6 @@ Node* mergeSortList(Node* head) {
 Node* getList(const char* msg) {
 	Node list;
 	Node* tail = &list;
-	printf("Enter the integer elemets of %s list(q to stop):\n", msg);
 	int n = rand()%10 + 7;
 	for(int i = 0; i < n; i++) {
 		Node* p = newNode();
